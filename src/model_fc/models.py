@@ -1,18 +1,22 @@
+from copy import deepcopy
+
 import numpy as np
 from nilearn.connectome import ConnectivityMeasure
 from pyuoi.linear_model import UoI_Lasso
 from sklearn.base import BaseEstimator
-from sklearn.linear_model import ElasticNetCV, LassoCV, LassoLarsIC, RidgeCV, LinearRegression
+from sklearn.linear_model import (
+    ElasticNetCV,
+    LassoCV,
+    LassoLarsIC,
+    LinearRegression,
+    RidgeCV,
+)
 from sklearn.metrics import r2_score
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import (
     check_is_fitted,
     validate_data,
 )
-
-import pingouin as pg
-
-from copy import deepcopy
 
 
 def run_model(train_ts, test_ts, n_rois, model, **kwargs):
@@ -41,7 +45,9 @@ def run_model(train_ts, test_ts, n_rois, model, **kwargs):
         cloned_model = deepcopy(model)
         cloned_model.fit(X=X_train, y=y_train)
         fc_mat[target_idx, :] = np.insert(cloned_model.coef_, target_idx, 1)
-        test_rsq, train_rsq = eval_metrics(X_train, y_train, X_test, y_test, cloned_model)
+        test_rsq, train_rsq = eval_metrics(
+            X_train, y_train, X_test, y_test, cloned_model
+        )
 
         results_dict[f"node_{target_idx}"]["train_r2"] = train_rsq
         results_dict[f"node_{target_idx}"]["test_r2"] = test_rsq
@@ -101,16 +107,16 @@ def init_model(
         enet = ElasticNetCV(fit_intercept=True, cv=5, n_jobs=-1, max_iter=max_iter)
         model = enet
 
-    elif model_str == "ols": 
+    elif model_str == "ols":
         ols = LinearRegression(fit_intercept=True, cv=5, n_jobs=-1, max_iter=max_iter)
         model = ols
 
-    elif model_str == "pearsonRegressor": 
+    elif model_str == "pearsonRegressor":
         p_reg = PearsonRegressor(fit_intercept=True)
         model = p_reg
-        
+
     elif model_str in ["correlation", "tangent", "partial_correlation"]:
-        model = ConnectivityMeasure(kind= model_str.replace('_', ' '))
+        model = ConnectivityMeasure(kind=model_str.replace("_", " "))
 
     return model
 
@@ -162,15 +168,16 @@ class PartialPearsonRegressor(BaseEstimator):
     def fit(self, X, y):
         type_of_target(y, raise_unknown=True)
         X, y = validate_data(self, X, y)
-
         # Calculate the Pearson coefficient between y and every column of x
-        corrmatrix = (np.concatenate([X, y[:, None]], -1).T)
-        self.coef_ = corrmatrix[-1, :-1]
+        model = ConnectivityMeasure(kind="partial correlation")
+        ts = np.concatenate([X, y[:, None]], -1)
+        corrmatrix = model.fit_transform(ts)  # replace with partial corr
+        self.coef_ = corrmatrix[0, -1, :-1]
         # Calculate the linear combination of columns of X with these
         # coefficients
         naive_pred_y = X @ self.coef_
         # Calculate the scale parameter to match the variance of y
-        self.scale_ = np.mean(y / naive_pred_y)
+        self.scale_ = np.var(naive_pred_y) / np.var(y)
         self.is_fitted_ = True
         self.n_features_in_ = X.shape[1]
         return self
@@ -179,4 +186,3 @@ class PartialPearsonRegressor(BaseEstimator):
         check_is_fitted(self)
         X = validate_data(self, X, reset=False)
         return X @ self.coef_ * self.scale_
-
