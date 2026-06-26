@@ -1,7 +1,7 @@
 import math
 
 import numpy as np
-from model_fc.models import PartialPearsonRegressor, PearsonRegressor
+from model_fc.models import PartialCorrelationRegressor, PearsonRegressor
 from sklearn.utils.estimator_checks import parametrize_with_checks
 
 
@@ -33,14 +33,16 @@ def test_PearsonRegressorScale():
     assert math.isclose(pr.scale_, 0.1)
 
 
-def test_PartialPearsonRegressor():
+def test_PartialCorrelationRegressor():
+    np.random.seed(101)
     X = np.random.randn(100, 20)
     y = np.random.randn(100)
 
-    pr = PartialPearsonRegressor()
+    pr = PartialCorrelationRegressor()
     pr.fit(X, y)
     pred = pr.predict(X)
     assert pred.shape == y.shape
+    # Here, we require that the variances be matched:
     assert math.isclose(np.var(y), np.var(pred))
 
 
