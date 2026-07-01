@@ -1,8 +1,16 @@
+from copy import deepcopy
+
 import numpy as np
 from nilearn.connectome import ConnectivityMeasure
 from pyuoi.linear_model import UoI_Lasso
 from sklearn.base import BaseEstimator
-from sklearn.linear_model import ElasticNetCV, LassoCV, LassoLarsIC
+from sklearn.linear_model import (
+    ElasticNetCV,
+    LassoCV,
+    LassoLarsIC,
+    LinearRegression,
+    RidgeCV,
+)
 from sklearn.metrics import r2_score
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import (
@@ -27,20 +35,23 @@ def run_model(train_ts, test_ts, n_rois, model, **kwargs):
 
     for target_idx in range(train_ts.shape[1]):
         results_dict[f"node_{target_idx}"] = {}
-        print(f"*****ECHO {target_idx}***********")
+        # print(f"*****ECHO {target_idx}***********")
         y_train = np.array(train_ts[:, target_idx])
         X_train = np.delete(train_ts, target_idx, axis=1)
 
         y_test = np.array(test_ts[:, target_idx])
         X_test = np.delete(test_ts, target_idx, axis=1)
 
-        model.fit(X=X_train, y=y_train)
-
-        fc_mat[target_idx, :] = np.insert(model.coef_, target_idx, 1)
-        test_rsq, train_rsq = eval_metrics(X_train, y_train, X_test, y_test, model)
+        cloned_model = deepcopy(model)
+        cloned_model.fit(X=X_train, y=y_train)
+        fc_mat[target_idx, :] = np.insert(cloned_model.coef_, target_idx, 1)
+        test_rsq, train_rsq = eval_metrics(
+            X_train, y_train, X_test, y_test, cloned_model
+        )
 
         results_dict[f"node_{target_idx}"]["train_r2"] = train_rsq
         results_dict[f"node_{target_idx}"]["test_r2"] = test_rsq
+        results_dict[f"node_{target_idx}"]["model"] = cloned_model
 
     results_dict["fc_matrix"] = fc_mat
 
@@ -96,8 +107,16 @@ def init_model(
         enet = ElasticNetCV(fit_intercept=True, cv=5, n_jobs=-1, max_iter=max_iter)
         model = enet
 
-    elif model_str in ["correlation", "tangent"]:
-        model = ConnectivityMeasure(kind=model_str)
+    elif model_str == "ols":
+        ols = LinearRegression(fit_intercept=True, cv=5, n_jobs=-1, max_iter=max_iter)
+        model = ols
+
+    elif model_str == "pearsonRegressor":
+        p_reg = PearsonRegressor(fit_intercept=True)
+        model = p_reg
+
+    elif model_str in ["correlation", "tangent", "partial_correlation"]:
+        model = ConnectivityMeasure(kind=model_str.replace("_", " "))
 
     return model
 
@@ -133,3 +152,43 @@ class PearsonRegressor(BaseEstimator):
         check_is_fitted(self)
         X = validate_data(self, X, reset=False)
         return X @ self.coef_ * self.scale_
+
+
+class PartialCorrelationRegressor(BaseEstimator):
+    """
+    Parameters
+    ----------
+    """
+
+    def __init__(self, fit_scale=True, copy_X=False, fit_intercept=False):
+        self.fit_scale = fit_scale
+        self.copy_X = copy_X
+        self.fit_intercept = fit_intercept
+
+    def fit(self, X, y):
+        type_of_target(y, raise_unknown=True)
+        X, y = validate_data(self, X, y)
+        # Calculate the Partial Correlation between y and every column of x,
+        # given all others
+        model = ConnectivityMeasure(kind="partial correlation")
+        ts = np.concatenate([X, y[:, None]], -1)
+        corrmatrix = model.fit_transform(ts)
+        self.coef_ = corrmatrix[0, -1, :-1]
+        # Calculate the linear combination of columns of X with these
+        # coefficients
+        naive_pred_y = X @ self.coef_
+        # Calculate the scale parameter to match the variance of y
+        # Deal with degenerate case:
+        if np.all(self.coef_ == np.zeros_like(self.coef_)):
+            self.scale_ = 1
+        # Deal with case where coefficients are not all-zero:
+        else:
+            self.scale_ = np.std(naive_pred_y) / np.std(y)
+        self.is_fitted_ = True
+        self.n_features_in_ = X.shape[1]
+        return self
+
+    def predict(self, X):
+        check_is_fitted(self)
+        X = validate_data(self, X, reset=False)
+        return (X @ self.coef_) / self.scale_
