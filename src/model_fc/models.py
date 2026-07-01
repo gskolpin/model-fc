@@ -154,7 +154,7 @@ class PearsonRegressor(BaseEstimator):
         return X @ self.coef_ * self.scale_
 
 
-class PartialPearsonRegressor(BaseEstimator):
+class PartialCorrelationRegressor(BaseEstimator):
     """
     Parameters
     ----------
@@ -168,16 +168,22 @@ class PartialPearsonRegressor(BaseEstimator):
     def fit(self, X, y):
         type_of_target(y, raise_unknown=True)
         X, y = validate_data(self, X, y)
-        # Calculate the Pearson coefficient between y and every column of x
+        # Calculate the Partial Correlation between y and every column of x,
+        # given all others
         model = ConnectivityMeasure(kind="partial correlation")
         ts = np.concatenate([X, y[:, None]], -1)
-        corrmatrix = model.fit_transform(ts)  # replace with partial corr
+        corrmatrix = model.fit_transform(ts)
         self.coef_ = corrmatrix[0, -1, :-1]
         # Calculate the linear combination of columns of X with these
         # coefficients
         naive_pred_y = X @ self.coef_
         # Calculate the scale parameter to match the variance of y
-        self.scale_ = np.var(naive_pred_y) / np.var(y)
+        # Deal with degenerate case:
+        if np.all(self.coef_ == np.zeros_like(self.coef_)):
+            self.scale_ = 1
+        # Deal with case where coefficients are not all-zero:
+        else:
+            self.scale_ = np.std(naive_pred_y) / np.std(y)
         self.is_fitted_ = True
         self.n_features_in_ = X.shape[1]
         return self
@@ -185,4 +191,4 @@ class PartialPearsonRegressor(BaseEstimator):
     def predict(self, X):
         check_is_fitted(self)
         X = validate_data(self, X, reset=False)
-        return X @ self.coef_ * self.scale_
+        return (X @ self.coef_) / self.scale_
